@@ -60,6 +60,8 @@ class LedState(object):
     self.max_brightness = 0.6
     self.brightness_enhance = 0.0
     self.direction = 1
+    # Hue is in degrees (0..360)
+    self.hue_deg = 150.0 / 255.0 * 360.0
 
   def update(self, time_ms):
     pos_frac = (time_ms - self.start_ms) / self.fade_duration
@@ -73,10 +75,10 @@ class LedState(object):
       pos_frac = 1.0 - pos_frac
 
     brightness = self.min_brightness + pos_frac * (self.max_brightness - self.min_brightness)
-
     brightness = min(1.0, brightness + self.brightness_enhance)
 
-    led.fill(Color(0.0, 0.0, 255.0, brightness))
+    led.setMasterBrightness(brightness)
+    led.fillHue(self.hue_deg)
     led.update()
 
 class App(object):
@@ -87,11 +89,13 @@ class App(object):
     self.motor_speed = 0.0
     self.last_action_time_ms = 0.0
     self.powerup_count = 0
+    self.packet = bytearray(4096)
 
-  def handle_powerup(self, time_ms):
+  def handle_powerup(self, hue_deg, time_ms):
     self.last_action_time_ms = time_ms
     self.powerup_count += 1
 
+    self.led_state.hue_deg = hue_deg
     self.led_state.brightness_enhance = min(1.0, self.led_state.brightness_enhance + 0.1)
     self.motor_speed = min(1.0, self.motor_speed + 0.1)
 
@@ -107,15 +111,16 @@ class App(object):
     self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - 0.1)
     self.motor_speed = max(0.0, self.motor_speed - 0.1)
 
-    print 'timeout: brightness_enhance %f motor speed %f' % (self.led_state.brightness_enhance, self.motor_speed)
+    print 'timeout: count %d brightness_enhance %f motor speed %f' % (self.powerup_count, self.led_state.brightness_enhance, self.motor_speed)
 
   def update_network(self, time_ms):
     bufsize = 1024
     inputs = [ self.sock ]
     readable, writable, exceptional = select.select(inputs, [], [], 0)
     for item in readable:
-      result = self.sock.recvfrom(bufsize)
-      self.handle_powerup(time_ms)
+      self.sock.recvfrom_into(self.packet)
+      hue_deg = self.packet[0] * 360.0 / 255.0
+      self.handle_powerup(hue_deg, time_ms)
 
   def update(self, time_ms):
     self.update_network(time_ms)

@@ -56,12 +56,11 @@ class LedState(object):
   def __init__(self, time_ms):
     self.start_ms = time_ms
     self.fade_duration = 2000
-    self.min_brightness = 0.1
-    self.max_brightness = 0.3
+    self.min_brightness = 0.2
+    self.max_brightness = 0.2
     self.brightness_enhance = 0.0
     self.direction = 1
-    # Hue is in degrees (0..360)
-    self.hue_deg = 150.0 / 255.0 * 360.0
+    self.hue_deg = 0
 
   def update(self, time_ms):
     pos_frac = (time_ms - self.start_ms) / self.fade_duration
@@ -87,46 +86,61 @@ class App(object):
     self.sock.bind(('', UDP_PORT))
     self.led_state = LedState(TimeMs())
     self.motor_speed = 0.0
-    self.last_action_time_ms = 0.0
-    self.powerup_count = 0
+    self.full_range_fade_ms = 30000.0
+    self.speed_full_range = 1.0
+    self.speed_fade_per_ms = self.speed_full_range / self.full_range_fade_ms
+    self.be_full_range = 1.0
+    self.be_fade_per_ms = self.be_full_range / self.full_range_fade_ms
+    self.last_powerup_time_ms = 0.0
+    self.last_fade_time_ms = 0.0
     self.packet = bytearray(4096)
+    # Hue is in degrees (0..360)
+    self.min_hue_deg = 155 * 360.0 / 255.0
+    self.max_hue_deg = 255 * 360.0 / 255.0
+    self.hue_fade_per_ms = (self.max_hue_deg - self.min_hue_deg) / self.full_range_fade_ms
 
-  def handle_powerup(self, hue_deg, time_ms):
-    self.last_action_time_ms = time_ms
-    self.powerup_count += 1
+  def handle_powerup(self, incr_pct, time_ms):
+    self.last_powerup_time_ms = time_ms
 
-    self.led_state.hue_deg = hue_deg
-    self.led_state.brightness_enhance = min(1.0, self.led_state.brightness_enhance + 0.1)
-    self.motor_speed = min(1.0, self.motor_speed + 0.1)
+    hue_incr = (self.max_hue_deg - self.min_hue_deg) * incr_pct / 100
+    self.led_state.hue_deg = min(self.max_hue_deg, self.led_state.hue_deg + hue_incr)
 
-    print 'powerup: brightness_enhance %f motor speed %f' % (self.led_state.brightness_enhance, self.motor_speed)
+    be_incr = self.be_full_range * incr_pct / 100
+    self.led_state.brightness_enhance = min(1.0, self.led_state.brightness_enhance + be_incr)
 
-  def timeout(self, time_ms):
-    if self.powerup_count == 0:
-      return
+    speed_incr = self.speed_full_range * incr_pct / 100
+    self.motor_speed = min(1.0, self.motor_speed + speed_incr)
 
-    self.powerup_count -= 1
-    self.last_action_time_ms = time_ms
+    print 'powerup: hue %f brightness_enhance %f motor speed %f' % (self.led_state.hue_deg, self.led_state.brightness_enhance, self.motor_speed)
 
-    self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - 0.1)
-    self.motor_speed = max(0.0, self.motor_speed - 0.1)
+  def fade_to_idle(self, time_ms):
+    # Delay before starting the fade
+    fade_start_time = self.last_powerup_time_ms + 3000
+    if time_ms > fade_start_time:
+      # Hue fades according to time since last powerup
+      delta_ms = time_ms - self.last_fade_time_ms
+      self.led_state.hue_deg = max(self.min_hue_deg, self.led_state.hue_deg - self.hue_fade_per_ms * delta_ms)
+      self.motor_speed = max(0.0, self.motor_speed - self.speed_fade_per_ms * delta_ms)
+      self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - self.be_fade_per_ms * delta_ms)
 
-    print 'timeout: count %d brightness_enhance %f motor speed %f' % (self.powerup_count, self.led_state.brightness_enhance, self.motor_speed)
+      #print 'fade: brightness_enhance %f motor speed %f' % (self.led_state.brightness_enhance, self.motor_speed)
+      #print 'fade: hue_deg %f time_ms %f' % (self.led_state.hue_deg, time_ms)
+
+    self.last_fade_time_ms = time_ms
 
   def update_network(self, time_ms):
-    bufsize = 1024
     inputs = [ self.sock ]
     readable, writable, exceptional = select.select(inputs, [], [], 0)
     for item in readable:
       self.sock.recvfrom_into(self.packet)
-      hue_deg = self.packet[0] * 360.0 / 255.0
-      self.handle_powerup(hue_deg, time_ms)
+      # Receive an increment percentage
+      incr_pct = self.packet[0]
+      self.handle_powerup(incr_pct, time_ms)
 
   def update(self, time_ms):
     self.update_network(time_ms)
 
-    if time_ms - self.last_action_time_ms > 2000:
-      self.timeout(time_ms)
+    self.fade_to_idle(time_ms)
 
     self.led_state.update(time_ms)
 

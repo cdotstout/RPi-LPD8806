@@ -34,11 +34,13 @@ class LEDStrip:
         for led in range(self.leds):
             self.buffer[led] = bytearray(3)
         for i in range(256):
+            # Disabling gamma for smoother fades at low brightness
+            self.gamma[i] = 0x80 | int(float(i) / 255.0 * 127.0)
             # Color calculations from
             # http://learn.adafruit.com/light-painting-with-raspberry-pi
-            self.gamma[i] = 0x80 | int(
-                pow(float(i) / 255.0, 2.5) * 127.0 + 0.5
-            )
+            #self.gamma[i] = 0x80 | int(
+            #    pow(float(i) / 255.0, 2.5) * 127.0 + 0.5
+            #)
 
     def update(self):
         self.driver.update(self.buffer)

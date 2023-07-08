@@ -56,8 +56,8 @@ class LedState(object):
   def __init__(self, time_ms):
     self.start_ms = time_ms
     self.fade_duration = 2000
-    self.min_brightness = 0.4
-    self.max_brightness = 0.6
+    self.min_brightness = 0.1
+    self.max_brightness = 0.3
     self.brightness_enhance = 0.0
     self.direction = 1
     # Hue is in degrees (0..360)

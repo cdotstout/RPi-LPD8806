@@ -3,6 +3,7 @@
 import array
 from bootstrap import *
 from ola.ClientWrapper import ClientWrapper
+import math
 import signal
 import select
 import socket
@@ -10,6 +11,12 @@ import sys
 import time
 
 UDP_PORT = 5005
+
+STATE_IDLE = 0
+STATE_POWERUP = 1
+STATE_FADE = 2
+
+STATE_NAME = ['IDLE', 'POWERUP', 'FADE']
 
 wrapper = ClientWrapper()
 
@@ -52,32 +59,81 @@ def SignalHandler(sig, frame):
     SendMotorSpeed(0)
     sys.exit(0)
 
+def foobar(x):
+  if x < 0:
+    return -math.pow(x, 2) + 0.5
+  else:
+    return math.pow(x, 2) + 0.5
+
 class LedState(object):
   def __init__(self, time_ms):
-    self.start_ms = time_ms
-    self.fade_duration = 2000
     self.min_brightness = 0.2
-    self.max_brightness = 0.2
     self.brightness_enhance = 0.0
-    self.direction = 1
-    self.hue_deg = 0
+    self.powerup_width_pixels = 3
+
+  # Given a pixel from 0..17, draws into all strips
+  def setPixel(self, pixel, hue):
+    if pixel < 0 or pixel > LEDS_PER_STRIP - 1:
+      return
+
+    if hue > 0:
+      led.setHue(pixel, hue)
+      led.setHue(LEDS_PER_STRIP * 2 - pixel - 1, hue)
+      led.setHue(LEDS_PER_STRIP * 2 + pixel, hue)
+      led.setHue(LEDS_PER_STRIP * 4 - pixel - 1, hue)
+      led.setHue(LEDS_PER_STRIP * 4 + pixel, hue)
+      led.setHue(LEDS_PER_STRIP * 6 - pixel - 1, hue)
+    else:
+      led.setOff(pixel)
+      led.setOff(LEDS_PER_STRIP * 2 - pixel - 1)
+      led.setOff(LEDS_PER_STRIP * 2 + pixel)
+      led.setOff(LEDS_PER_STRIP * 4 - pixel - 1)
+      led.setOff(LEDS_PER_STRIP * 4 + pixel)
+      led.setOff(LEDS_PER_STRIP * 6 - pixel - 1)
+
+  def setPixelV(self, pixel, hue, v):
+    if pixel < 0 or pixel > LEDS_PER_STRIP - 1:
+      return
+
+    if hue > 0:
+      led.setHSV(pixel, hue, 1, v)
+      led.setHSV(LEDS_PER_STRIP * 2 - pixel - 1, hue, 1, v)
+      led.setHSV(LEDS_PER_STRIP * 2 + pixel, hue, 1, v)
+      led.setHSV(LEDS_PER_STRIP * 4 - pixel - 1, hue, 1, v)
+      led.setHSV(LEDS_PER_STRIP * 4 + pixel, hue, 1, v)
+      led.setHSV(LEDS_PER_STRIP * 6 - pixel - 1, hue, 1, v)
+    else:
+      led.setOff(pixel)
+      led.setOff(LEDS_PER_STRIP * 2 - pixel - 1)
+      led.setOff(LEDS_PER_STRIP * 2 + pixel)
+      led.setOff(LEDS_PER_STRIP * 4 - pixel - 1)
+      led.setOff(LEDS_PER_STRIP * 4 + pixel)
+      led.setOff(LEDS_PER_STRIP * 6 - pixel - 1)
+
+  # Draws a powerup band at the location given by percentage
+  def drawPowerup(self, pct, hue, hot_hue_deg):
+    led.fillHue(hot_hue_deg)
+
+    top = pct * (LEDS_PER_STRIP + self.powerup_width_pixels)
+    bottom = top - self.powerup_width_pixels
+    top_pixel = math.floor(top)
+    bottom_pixel = math.ceil(bottom)
+
+    for pixel in range(int(bottom_pixel), int(top_pixel)):
+      self.setPixel(pixel, hue)
+
+    residual_hue = min(360, hue + 20)
+    v = 0.4
+    self.setPixelV(int(top_pixel), residual_hue, v)
+    self.setPixelV(int(bottom_pixel) - 1, residual_hue, v)
+
+  def fillBackground(self, hue_deg):
+    led.fillHue(hue_deg)
 
   def update(self, time_ms):
-    pos_frac = (time_ms - self.start_ms) / self.fade_duration
-
-    if pos_frac > 1.0:
-      self.start_ms = time_ms
-      self.direction *= -1
-      pos_frac = 0.0
-
-    if self.direction < 0:
-      pos_frac = 1.0 - pos_frac
-
-    brightness = self.min_brightness + pos_frac * (self.max_brightness - self.min_brightness)
-    brightness = min(1.0, brightness + self.brightness_enhance)
-
+    brightness = min(1.0, self.min_brightness + self.brightness_enhance)
     led.setMasterBrightness(brightness)
-    led.fillHue(self.hue_deg)
+
     led.update()
 
 class App(object):
@@ -97,35 +153,50 @@ class App(object):
     # Hue is in degrees (0..360)
     self.min_hue_deg = 155 * 360.0 / 255.0
     self.max_hue_deg = 255 * 360.0 / 255.0
+    self.bg_hue_deg = self.min_hue_deg
     self.hue_fade_per_ms = (self.max_hue_deg - self.min_hue_deg) / self.full_range_fade_ms
+    self.state = STATE_IDLE
+    self.state_start_ms = 0
+    self.powerup_hue = 0
+    self.powerup_travel_ms = 500
 
-  def handle_powerup(self, incr_pct, time_ms):
+  def set_state(self, state, time_ms):
+    self.state = state
+    self.state_start_ms = time_ms
+    print 'state: %s' % STATE_NAME[self.state]
+
+  def handle_powerup(self, incr_pct, hue, time_ms):
     self.last_powerup_time_ms = time_ms
 
-    hue_incr = (self.max_hue_deg - self.min_hue_deg) * incr_pct / 100
-    self.led_state.hue_deg = min(self.max_hue_deg, self.led_state.hue_deg + hue_incr)
-
+    # Jump in brightness and motor speed.
+    # Background hue animates over powerup.
     be_incr = self.be_full_range * incr_pct / 100
     self.led_state.brightness_enhance = min(1.0, self.led_state.brightness_enhance + be_incr)
 
     speed_incr = self.speed_full_range * incr_pct / 100
     self.motor_speed = min(1.0, self.motor_speed + speed_incr)
 
-    print 'powerup: hue %f brightness_enhance %f motor speed %f' % (self.led_state.hue_deg, self.led_state.brightness_enhance, self.motor_speed)
+    self.set_state(STATE_POWERUP, time_ms)
+    self.powerup_hue = hue
+
+    print 'powerup: powerup_hue %f background hue %f brightness_enhance %f motor speed %f' % (self.powerup_hue, self.bg_hue_deg, self.led_state.brightness_enhance, self.motor_speed)
 
   def fade_to_idle(self, time_ms):
     # Delay before starting the fade
-    fade_start_time = self.last_powerup_time_ms + 3000
+    fade_start_time = self.state_start_ms + 3000
     if time_ms > fade_start_time:
       # Hue fades according to time since last powerup
       delta_ms = time_ms - self.last_fade_time_ms
-      self.led_state.hue_deg = max(self.min_hue_deg, self.led_state.hue_deg - self.hue_fade_per_ms * delta_ms)
-      self.motor_speed = max(0.0, self.motor_speed - self.speed_fade_per_ms * delta_ms)
+      self.bg_hue_deg = max(self.min_hue_deg, self.bg_hue_deg - self.hue_fade_per_ms * delta_ms)
+
+      self.motor_speed = 0.0 #max(0.0, self.motor_speed - self.speed_fade_per_ms * delta_ms)
       self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - self.be_fade_per_ms * delta_ms)
 
-      #print 'fade: brightness_enhance %f motor speed %f' % (self.led_state.brightness_enhance, self.motor_speed)
-      #print 'fade: hue_deg %f time_ms %f' % (self.led_state.hue_deg, time_ms)
+      print 'fade: brightness_enhance %f bg_hue_deg %f' % (self.led_state.brightness_enhance, self.bg_hue_deg)
+      if self.led_state.brightness_enhance <= 0:
+        self.set_state(STATE_IDLE, time_ms)
 
+    self.led_state.fillBackground(self.bg_hue_deg)
     self.last_fade_time_ms = time_ms
 
   def update_network(self, time_ms):
@@ -133,16 +204,33 @@ class App(object):
     readable, writable, exceptional = select.select(inputs, [], [], 0)
     for item in readable:
       self.sock.recvfrom_into(self.packet)
-      # Receive an increment percentage
-      incr_pct = self.packet[0]
-      self.handle_powerup(incr_pct, time_ms)
+      # Receive a hue
+      powerup_hue_deg = self.packet[0] * 360.0 / 255.0
+      incr_pct = 10
+      self.handle_powerup(incr_pct, powerup_hue_deg, time_ms)
+
+  def update_led(self, time_ms):
+    if self.state == STATE_IDLE:
+      self.led_state.fillBackground(self.bg_hue_deg)
+
+    elif self.state == STATE_FADE:
+      self.fade_to_idle(time_ms)
+
+    elif self.state == STATE_POWERUP:
+      pos_frac = (time_ms - self.state_start_ms) / self.powerup_travel_ms
+      pos_frac = foobar((pos_frac - 0.5) * 1.3)
+      hue_delta_deg = 5
+      hue_deg = min(self.max_hue_deg, self.bg_hue_deg + min(1.0, pos_frac) * hue_delta_deg)
+      self.led_state.drawPowerup(pos_frac, self.powerup_hue, hue_deg)
+      if pos_frac >= 0.99:
+        self.set_state(STATE_FADE, time_ms)
+        self.bg_hue_deg = hue_deg
+
+    self.led_state.update(time_ms)
 
   def update(self, time_ms):
     self.update_network(time_ms)
-
-    self.fade_to_idle(time_ms)
-
-    self.led_state.update(time_ms)
+    self.update_led(time_ms)
 
     speed = int(max(1.0, (1.0 - self.motor_speed) * 32.0))
     if speed >= 32:

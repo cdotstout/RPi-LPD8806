@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 """
-use "from bootstrap import *" from any script to do all the standard setup 
+use "from bootstrap import *" from any script to do all the standard setup
 and checks needed by any script
 """
 
@@ -22,7 +22,7 @@ the appropriate kernel modules. Try:
 
 sudo modprobe spi_bcm2708 ; sudo modprobe spidev
 
-You may also need to unblacklist the spi_bcm2708 module in 
+You may also need to unblacklist the spi_bcm2708 module in
 /etc/modprobe.d/raspi-blacklist.conf
 
 """)
@@ -42,7 +42,9 @@ sudo chmod a+rw /dev/spidev0.0
 """)
     sys.exit(2)
 
-num = 54;
+LED_STRIP_COUNT = 6
+LEDS_PER_STRIP = 18
+num = LED_STRIP_COUNT * LEDS_PER_STRIP
 led = LEDStrip(num)
 #led.setChannelOrder(ChannelOrder.BRG) #Only use this if your strip does not use the GRB order
 #led.setMasterBrightness(0.5) #use this to set the overall max brightness of the strip

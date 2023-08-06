@@ -187,13 +187,11 @@ class App(object):
     be_incr = self.be_full_range * incr_pct / 100
     self.led_state.brightness_enhance = min(1.0, self.led_state.brightness_enhance + be_incr)
 
-    speed_incr = self.speed_full_range * incr_pct / 100
-    self.motor_speed = min(1.0, self.motor_speed + speed_incr)
 
     self.set_state(STATE_POWERUP, time_ms)
     self.powerup_hue = hue
 
-    print 'powerup: powerup_hue %f background hue %f brightness_enhance %f motor speed %f' % (self.powerup_hue, self.bg_hue_deg, self.led_state.brightness_enhance, self.motor_speed)
+    print 'powerup: powerup_hue %f background hue %f brightness_enhance %f' % (self.powerup_hue, self.bg_hue_deg, self.led_state.brightness_enhance)
 
   def fade_to_idle(self, time_ms):
     # Delay before starting the fade
@@ -203,13 +201,11 @@ class App(object):
       delta_ms = time_ms - self.last_fade_time_ms
       self.bg_hue_deg = max(self.min_hue_deg, self.bg_hue_deg - self.hue_fade_per_ms * delta_ms)
 
-      self.motor_speed = 0.0 #max(0.0, self.motor_speed - self.speed_fade_per_ms * delta_ms)
       self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - self.be_fade_per_ms * delta_ms)
 
       print 'fade: brightness_enhance %f bg_hue_deg %f' % (self.led_state.brightness_enhance, self.bg_hue_deg)
       if self.led_state.brightness_enhance <= 0:
         self.set_state(STATE_IDLE, time_ms)
-        self.motor_speed = 0.0
 
     self.led_state.fillBackground(self.bg_hue_deg)
     self.last_fade_time_ms = time_ms
@@ -246,6 +242,10 @@ class App(object):
   def update(self, time_ms):
     self.update_network(time_ms)
     self.update_led(time_ms)
+
+    # motor speed is driven by the "heat" (bg_hue), from update_led
+    heat_frac = (self.bg_hue_deg - self.min_hue_deg) / (self.max_hue_deg - self.min_hue_deg)
+    self.motor_speed = heat_frac
 
     speed = int(max(1.0, (1.0 - self.motor_speed) * 32.0))
     if speed >= 32:

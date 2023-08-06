@@ -73,10 +73,10 @@ def SignalHandler(sig, frame):
     sys.exit(0)
 
 def foobar(x):
-  if x < 0:
-    return -math.pow(x, 2) + 0.5
+  if x == 0:
+    return 0
   else:
-    return math.pow(x, 2) + 0.5
+    return math.log(x + 1.0, 2.0 + x/2)
 
 class LedState(object):
   def __init__(self, time_ms):
@@ -203,7 +203,7 @@ class App(object):
 
       self.led_state.brightness_enhance = max(0.0, self.led_state.brightness_enhance - self.be_fade_per_ms * delta_ms)
 
-      print 'fade: brightness_enhance %f bg_hue_deg %f' % (self.led_state.brightness_enhance, self.bg_hue_deg)
+      #print 'fade: brightness_enhance %f bg_hue_deg %f' % (self.led_state.brightness_enhance, self.bg_hue_deg)
       if self.led_state.brightness_enhance <= 0:
         self.set_state(STATE_IDLE, time_ms)
 
@@ -229,7 +229,7 @@ class App(object):
 
     elif self.state == STATE_POWERUP:
       pos_frac = (time_ms - self.state_start_ms) / self.powerup_travel_ms
-      pos_frac = foobar((pos_frac - 0.5) * 1.3)
+      pos_frac = foobar(pos_frac)
       hue_delta_deg = 5
       hue_deg = min(self.max_hue_deg, self.bg_hue_deg + min(1.0, pos_frac) * hue_delta_deg)
       self.led_state.drawPowerup(pos_frac, self.powerup_hue, hue_deg)

@@ -24,13 +24,26 @@ def DmxSent(status):
   #print 'DmxSent %d' % status.Succeeded()
   wrapper.Stop()
 
-# Clockwise High speed (5rpm) is 1; slow speed is 127 (0.5rpm)
-# Counter Clockwise High speed (5rpm) is 255; slow speed is 129 (0.5rpm)
-def SendMotorSpeed(speed):
-  universe = 0
-  data = array.array('B', [speed]) # B for byte
-  wrapper.Client().SendDmx(universe, data, DmxSent)
-  wrapper.Run()
+class Dmx(object):
+  def __init__(self):
+    # Channel 1 is pinspot, channel 2 is motor speed
+    self.data = array.array('B', [0, 0]) # B for byte
+    self.universe = 0
+
+  # Clockwise High speed (5rpm) is 1; slow speed is 127 (0.5rpm)
+  # Counter Clockwise High speed (5rpm) is 255; slow speed is 129 (0.5rpm)
+  def Update(self, speed, pinspot):
+    if pinspot == 0:
+      self.data[0] = 0
+    else:
+      self.data[0] = 128
+    self.data[1] = speed
+
+    wrapper.Client().SendDmx(self.universe, self.data, DmxSent)
+    wrapper.Run()
+
+dmx = Dmx()
+
 
 def Test():
   print 'Led test...'
@@ -41,7 +54,7 @@ def Test():
   led.all_off()
 
   print 'DMX motor test...'
-  SendMotorSpeed(255)
+  dmx.Update(255, 0)
   sleep(12)
   # SendMotorSpeed(0)
   # sleep(5)
@@ -49,14 +62,14 @@ def Test():
   # sleep(5)
 
   print 'DMX motor off'
-  SendMotorSpeed(0)
+  dmx.Update(0, 0)
 
 def TimeMs():
   return time.time() * 1000
 
 def SignalHandler(sig, frame):
     led.all_off()
-    SendMotorSpeed(0)
+    dmx.Update(0, 0)
     sys.exit(0)
 
 def foobar(x):
@@ -159,6 +172,7 @@ class App(object):
     self.state_start_ms = 0
     self.powerup_hue = 0
     self.powerup_travel_ms = 500
+    self.pinspot = 0
 
   def set_state(self, state, time_ms):
     self.state = state
@@ -195,6 +209,7 @@ class App(object):
       print 'fade: brightness_enhance %f bg_hue_deg %f' % (self.led_state.brightness_enhance, self.bg_hue_deg)
       if self.led_state.brightness_enhance <= 0:
         self.set_state(STATE_IDLE, time_ms)
+        self.motor_speed = 0.0
 
     self.led_state.fillBackground(self.bg_hue_deg)
     self.last_fade_time_ms = time_ms
@@ -234,9 +249,9 @@ class App(object):
 
     speed = int(max(1.0, (1.0 - self.motor_speed) * 32.0))
     if speed >= 32:
-      SendMotorSpeed(0)
+      dmx.Update(0, self.pinspot)
     else:
-      SendMotorSpeed(speed)
+      dmx.Update(speed, self.pinspot)
 
 
 def Loop():

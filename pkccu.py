@@ -247,6 +247,11 @@ class App(object):
     heat_frac = (self.bg_hue_deg - self.min_hue_deg) / (self.max_hue_deg - self.min_hue_deg)
     self.motor_speed = heat_frac
 
+    if heat_frac > 0.9:
+      self.pinspot = 1
+    else:
+      self.pinspot = 0
+
     speed = int(max(1.0, (1.0 - self.motor_speed) * 32.0))
     if speed >= 32:
       dmx.Update(0, self.pinspot)

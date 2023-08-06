@@ -124,9 +124,7 @@ class LedState(object):
       led.setOff(LEDS_PER_STRIP * 6 - pixel - 1)
 
   # Draws a powerup band at the location given by percentage
-  def drawPowerup(self, pct, hue, hot_hue_deg):
-    led.fillHue(hot_hue_deg)
-
+  def drawPowerup(self, pct, hue):
     top = pct * (LEDS_PER_STRIP + self.powerup_width_pixels)
     bottom = top - self.powerup_width_pixels
     top_pixel = math.floor(top)
@@ -170,7 +168,11 @@ class App(object):
     self.hue_fade_per_ms = (self.max_hue_deg - self.min_hue_deg) / self.full_range_fade_ms
     self.state = STATE_IDLE
     self.state_start_ms = 0
-    self.powerup_hue = 0
+    # There can be two powerups at a time
+    # The index of the next powerup
+    self.powerup_next = 0
+    self.powerup_start_ms = [0,0]
+    self.powerup_hue = [0,0]
     self.powerup_travel_ms = 500
     self.pinspot = 0
 
@@ -189,9 +191,13 @@ class App(object):
 
 
     self.set_state(STATE_POWERUP, time_ms)
-    self.powerup_hue = hue
+    index = self.powerup_next
+    self.powerup_next ^= 1
 
-    print 'powerup: powerup_hue %f background hue %f brightness_enhance %f' % (self.powerup_hue, self.bg_hue_deg, self.led_state.brightness_enhance)
+    self.powerup_hue[index] = hue
+    self.powerup_start_ms[index] = time_ms
+
+    print 'powerup: index %d powerup_hue %f background hue %f brightness_enhance %f' % (index, self.powerup_hue[index], self.bg_hue_deg, self.led_state.brightness_enhance)
 
   def fade_to_idle(self, time_ms):
     # Delay before starting the fade
@@ -228,14 +234,51 @@ class App(object):
       self.fade_to_idle(time_ms)
 
     elif self.state == STATE_POWERUP:
-      pos_frac = (time_ms - self.state_start_ms) / self.powerup_travel_ms
-      pos_frac = foobar(pos_frac)
-      hue_delta_deg = 5
-      hue_deg = min(self.max_hue_deg, self.bg_hue_deg + min(1.0, pos_frac) * hue_delta_deg)
-      self.led_state.drawPowerup(pos_frac, self.powerup_hue, hue_deg)
-      if pos_frac >= 0.99:
+      hue_delta_deg = 0
+      pos_frac = [-1.0, -1.0]
+      powerups_complete = True
+
+      index = self.powerup_next
+      start_ms = self.powerup_start_ms[index]
+      if start_ms > 0:
+        pos_frac[index] = (time_ms - start_ms) / self.powerup_travel_ms
+        pos_frac[index] = foobar(pos_frac[index])
+        hue_delta_deg += 5 * min(1.0, pos_frac[index])
+        hue_deg = min(self.max_hue_deg, self.bg_hue_deg + hue_delta_deg)
+        if pos_frac[index] >= 0.99:
+          # Modified value will be used below
+          self.bg_hue_deg = hue_deg
+          self.powerup_start_ms[index] = 0
+        else:
+          powerups_complete = False
+
+      index ^= 1
+      start_ms = self.powerup_start_ms[index]
+      if start_ms > 0:
+        pos_frac[index] = (time_ms - start_ms) / self.powerup_travel_ms
+        pos_frac[index] = foobar(pos_frac[index])
+        hue_delta_deg += 5 * min(1.0, pos_frac[index])
+        hue_deg = min(self.max_hue_deg, self.bg_hue_deg + hue_delta_deg)
+        if pos_frac[index] >= 0.99:
+          self.bg_hue_deg = hue_deg
+          self.powerup_start_ms[index] = 0
+        else:
+          powerups_complete = False
+
+      hue_deg = min(self.max_hue_deg, self.bg_hue_deg + hue_delta_deg)
+      self.led_state.fillBackground(hue_deg)
+
+      index = self.powerup_next
+      if pos_frac[index] >= 0.0:
+        self.led_state.drawPowerup(pos_frac[index], self.powerup_hue[index])
+
+      index ^= 1
+      if pos_frac[index] >= 0.0:
+        self.led_state.drawPowerup(pos_frac[index], self.powerup_hue[index])
+
+      if powerups_complete == True:
         self.set_state(STATE_FADE, time_ms)
-        self.bg_hue_deg = hue_deg
+
 
     self.led_state.update(time_ms)
 
